@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -13,7 +13,12 @@ type ChatRoom struct {
 	allClients  map[net.Conn]int
 	newCon      chan net.Conn
 	deadCon     chan net.Conn
-	messages    chan string
+	messages    chan Message
+}
+
+type Message struct {
+	Name string
+	Text string
 }
 
 //adds a new client and listens for messages from the client
@@ -21,26 +26,26 @@ func (data *ChatRoom) addConnection(conn net.Conn) {
 	data.allClients[conn] = data.clientCount
 	data.clientCount = data.clientCount + 1
 	log.Print(data.clientCount)
-	go func(conn net.Conn, clientID int) {
-		reader := bufio.NewReader(conn)
+	go func(conn net.Conn) {
 		for {
-			inbound, err := reader.ReadString('\n')
+			inbound := new(Message)
+			err := json.NewDecoder(conn).Decode(&inbound)
 			if err != nil {
 				break
 			}
-			data.messages <- fmt.Sprintf("%s", inbound)
+			data.messages <- *inbound
 		}
 		//Disconnecting User
 		data.deadCon <- conn
 
-	}(conn, data.allClients[conn])
+	}(conn)
 }
 
 //sends message to all connected clients
-func (data *ChatRoom) broadcast(message string) {
+func (data *ChatRoom) broadcast(message Message) {
 	for conn, _ := range data.allClients {
-		go func(conn net.Conn, message string) {
-			_, err := conn.Write([]byte(message))
+		go func(conn net.Conn, message Message) {
+			err := json.NewEncoder(conn).Encode(message)
 			if err != nil {
 				data.deadCon <- conn
 			}
@@ -62,7 +67,7 @@ func main() {
 		allClients:  make(map[net.Conn]int),
 		newCon:      make(chan net.Conn),
 		deadCon:     make(chan net.Conn),
-		messages:    make(chan string),
+		messages:    make(chan Message),
 	}
 	//starting TCP server
 	server, err := net.Listen("tcp", ":4040")
